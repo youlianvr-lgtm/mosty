@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Путешествие по Мостовскому району — квестбук</title>
+    <meta
+      name="description"
+      content="Линейный квестбук по Мостовскому району: читаем, отвечаем на один вопрос и открываем следующий раздел."
+    />
+    <link rel="stylesheet" href="css/styles.css" />
+  </head>
+  <body>
+    <a class="skip-link" href="#app">Перейти к содержимому</a>
+
+    <div id="app" class="app" role="application" aria-label="Квестбук"></div>
+
+    <div id="lightbox" class="lightbox" role="dialog" aria-hidden="true" aria-label="Просмотр изображения">
+      <button id="lightboxClose" class="lightbox__close" type="button" aria-label="Закрыть">×</button>
+      <img id="lightboxImg" alt="" />
+      <div id="lightboxCaption" class="lightbox__caption" aria-live="polite"></div>
+    </div>
+
+    <script src="js/content.js"></script>
+    <script src="js/app.js"></script>
+  </body>
+</html>
+
