@@ -1,4 +1,4 @@
-/* global window, document, history, location, localStorage, Image */
+/* global window, document, history, location, localStorage, Image, confirm */
 (() => {
   const QUEST = window.__QUEST__;
   const STORAGE_KEY = QUEST.meta.storageKey;
@@ -8,6 +8,7 @@
 
   const state = {
     finalPhotoStatus: "unknown",
+    lastMenuCompletedCount: null,
   };
 
   function escapeHtml(value) {
@@ -90,9 +91,8 @@
   }
 
   function getMosaicConfig() {
-    if (STAGES_TOTAL >= 16) {
-      return { columns: 4, rows: 4, tilesCount: 16 };
-    }
+    if (STAGES_TOTAL === 16) return { columns: 4, rows: 4, tilesCount: 16 };
+    if (STAGES_TOTAL >= 16) return { columns: 4, rows: 4, tilesCount: 16 };
     const tilesCount = STAGES_TOTAL;
     const columns = tilesCount <= 6 ? 3 : tilesCount <= 8 ? 4 : 5;
     const rows = Math.ceil(tilesCount / columns);
@@ -137,15 +137,20 @@
     const canLearnNew = completed < STAGES_TOTAL;
     const showStageList = completed > 0 || completed === STAGES_TOTAL;
     const visibleStageCount = showStageList ? Math.min(STAGES_TOTAL, completed + (completed < STAGES_TOTAL ? 1 : 0)) : 0;
-    const nextStageTitle = canLearnNew ? QUEST.stages[completed].title : "Маршрут завершен";
+    const nextStageTitle = canLearnNew ? QUEST.stages[completed].title : "Маршрут завершён";
     const routeSteps = QUEST.stages.map((stage, idx) => renderRouteStep(stage, idx, progress)).join("");
-    const mosaic = renderMosaic(progress);
+
+    const prevCompleted = Number.isFinite(state.lastMenuCompletedCount) ? state.lastMenuCompletedCount : null;
+    const newlyRevealedIndex = prevCompleted !== null && completed > prevCompleted ? completed - 1 : null;
+    state.lastMenuCompletedCount = completed;
+
+    const mosaic = renderMosaic(progress, newlyRevealedIndex);
 
     const hintFinal =
       state.finalPhotoStatus === "missing"
         ? `<div class="note note--warn">
-             <div class="note__title">Нужна итоговая композиция</div>
-             <div class="note__body">Добавьте файл <code>${escapeHtml(QUEST.meta.finalPhotoSrc)}</code>, чтобы мозаика собиралась из общей фотографии.</div>
+             <div class="note__title">Нужно итоговое фото</div>
+             <div class="note__body">Добавьте файл <code>${escapeHtml(QUEST.meta.finalPhotoSrc)}</code>, чтобы мозаика собиралась из общего изображения.</div>
            </div>`
         : "";
 
@@ -161,14 +166,14 @@
       </header>
 
       <main class="main main--menu" id="main">
-        <section class="hero hero--menu hero--fullbleed" style="--hero-bg:url('${escapeHtml(QUEST.stages[0].coverImage)}')">
+        <section class="hero hero--menu hero--fullbleed" style="--hero-bg:url('${escapeHtml(QUEST.stages[0].coverImage || "")}')">
           <div class="hero__backdrop"></div>
           <div class="hero__inner">
             <div class="hero__content">
               <h1 class="hero__heading">${escapeHtml(QUEST.meta.title)}</h1>
               <p class="hero__text">
-                Открывайте маршрут по Мостовскому району шаг за шагом: от общей истории к Неману, Мостам, Дубно,
-                памятным местам и музейным точкам, из которых складывается единая картина района.
+                Пройдите Мостовский район шаг за шагом: от даты образования и довоенной жизни — к истории войны, местам памяти, Неману, городу Мосты и Дубно.
+                В конце каждого этапа — один вопрос; правильный ответ открывает следующий фрагмент общей фотографии.
               </p>
             </div>
 
@@ -190,7 +195,7 @@
                   <div class="kpi__value">${completed}/${STAGES_TOTAL}</div>
                 </div>
                 <div class="hero__next">
-                  <div class="hero__nextLabel">Следующий объект</div>
+                  <div class="hero__nextLabel">Следующий этап</div>
                   <div class="hero__nextValue">${escapeHtml(nextStageTitle)}</div>
                 </div>
               </div>
@@ -290,29 +295,30 @@
     `;
   }
 
-  function renderMosaic(progress) {
+  function renderMosaic(progress, newlyRevealedIndex) {
     const { columns, rows, tilesCount } = getMosaicConfig();
     return `
       <div class="mosaic" style="--final-photo:url('${escapeHtml(QUEST.meta.finalPhotoSrc)}');--mosaic-cols:${columns};--mosaic-rows:${rows}" aria-label="Мозаика прогресса">
-        ${renderMosaicTiles(progress, columns, rows, tilesCount)}
+        ${renderMosaicTiles(progress, columns, rows, tilesCount, newlyRevealedIndex)}
       </div>
     `;
   }
 
-  function renderMosaicTiles(progress, columns, rows, tilesCount) {
+  function renderMosaicTiles(progress, columns, rows, tilesCount, newlyRevealedIndex) {
     const completed = progress.completedCount;
     const allDone = completed >= STAGES_TOTAL;
     const tiles = [];
 
     for (let i = 0; i < tilesCount; i++) {
       const revealed = i < completed;
-      tiles.push(renderMosaicTile(i, revealed, allDone, columns, rows));
+      const justUnlocked = newlyRevealedIndex === i;
+      tiles.push(renderMosaicTile(i, revealed, justUnlocked, allDone, columns, rows));
     }
 
     return tiles.join("");
   }
 
-  function renderMosaicTile(tileIndex, revealed, allDone, columns, rows) {
+  function renderMosaicTile(tileIndex, revealed, justUnlocked, allDone, columns, rows) {
     const col = tileIndex % columns;
     const row = Math.floor(tileIndex / columns);
     const posX = columns === 1 ? 0 : (col * 100) / (columns - 1);
@@ -325,7 +331,9 @@
 
     return `
       <div
-        class="mosaic__tile mosaic__tile--photo ${revealed ? "is-revealed" : "is-hidden"} ${allDone ? "is-color" : "is-gray"} ${revealed && !allDone ? "is-partial" : ""}"
+        class="mosaic__tile mosaic__tile--photo ${revealed ? "is-revealed" : "is-hidden"} ${allDone ? "is-color" : "is-gray"} ${
+          revealed && !allDone ? "is-partial" : ""
+        } ${justUnlocked ? "is-new" : ""}"
         style="--pos-x:${posX}%;--pos-y:${posY}%;--piece-shift-x:${shiftX}px;--piece-shift-y:${shiftY}px;--piece-rot:${rotate}deg"
         aria-label="${escapeHtml(title)}"
         ${state.finalPhotoStatus === "ok" ? 'data-open-poster="1"' : ""}
@@ -337,51 +345,6 @@
         </div>
       </div>
     `;
-  }
-
-  function wireMenuView(progress) {
-    wireLightbox();
-
-    document.getElementById("year").textContent = String(new Date().getFullYear());
-
-    const learnNewBtn = document.getElementById("learnNewBtn");
-    if (learnNewBtn && !learnNewBtn.disabled) {
-      learnNewBtn.addEventListener("click", () => {
-        navigateToStage(progress.completedCount + 1);
-      });
-    }
-
-    document.getElementById("resetBtn").addEventListener("click", () => {
-      const ok = confirm("Сбросить прогресс? Это действие нельзя отменить.");
-      if (ok) resetProgress();
-    });
-
-    const openPosterBtn = document.getElementById("openPosterBtn");
-    if (openPosterBtn) {
-      openPosterBtn.addEventListener("click", openFinalPoster);
-    }
-
-    document.querySelectorAll("[data-open-poster]").forEach((tile) => {
-      tile.addEventListener("click", openFinalPoster);
-    });
-
-    document.querySelectorAll("[data-stage]").forEach((btn) => {
-      btn.addEventListener("click", () => {
-        navigateToStage(Number(btn.getAttribute("data-stage")));
-      });
-    });
-
-    document.querySelectorAll("[data-lightbox-src]").forEach((btn) => {
-      if (btn.dataset.lbWired === "1") return;
-      btn.dataset.lbWired = "1";
-      btn.addEventListener("click", () => {
-        openLightbox({
-          src: btn.getAttribute("data-lightbox-src"),
-          alt: btn.getAttribute("data-lightbox-alt") || "",
-          caption: btn.getAttribute("data-lightbox-caption") || "",
-        });
-      });
-    });
   }
 
   function renderStageView(stageIndex, progress) {
@@ -436,7 +399,7 @@
     return `
       <header class="topbar topbar--overlay">
         <div class="topbar__brand">
-          <button class="backlink" type="button" id="backToMenu">← В меню</button>
+          <button class="backlink" type="button" id="backToMenu">← На главную</button>
           <div class="topbar__title">${escapeHtml(QUEST.meta.title)}</div>
           <div class="topbar__subtitle">Этап ${stageNumber} из ${STAGES_TOTAL} • Прогресс ${escapeHtml(progressText)}</div>
         </div>
@@ -477,13 +440,103 @@
               <div class="quiz__result" aria-live="polite"></div>
               <div class="quiz__actions">
                 <button class="btn btn--primary" id="finishStageBtn" type="button" disabled>Завершить этап</button>
-                <button class="btn btn--ghost" id="backBtn2" type="button">В меню</button>
+                <button class="btn btn--ghost" id="backBtn2" type="button">На главную</button>
               </div>
             </div>
           </div>
         </section>
       </main>
     `;
+  }
+
+  const lb = document.getElementById("lightbox");
+  const lbImg = document.getElementById("lightboxImg");
+  const lbCaption = document.getElementById("lightboxCaption");
+  const lbClose = document.getElementById("lightboxClose");
+
+  function wireLightbox() {
+    if (lb.dataset.wired === "1") return;
+    lb.dataset.wired = "1";
+
+    lbClose.addEventListener("click", closeLightbox);
+    lb.addEventListener("click", (event) => {
+      if (event.target === lb) closeLightbox();
+    });
+    document.addEventListener("keydown", (event) => {
+      if (event.key === "Escape") closeLightbox();
+    });
+  }
+
+  function openLightbox({ src, alt, caption }) {
+    lbImg.src = src;
+    lbImg.alt = alt || "";
+    lbCaption.textContent = caption || "";
+    lb.classList.add("show");
+    lb.setAttribute("aria-hidden", "false");
+    lbClose.focus();
+  }
+
+  function closeLightbox() {
+    if (!lb.classList.contains("show")) return;
+    lb.classList.remove("show");
+    lb.setAttribute("aria-hidden", "true");
+    lbImg.src = "";
+    lbCaption.textContent = "";
+  }
+
+  function openFinalPoster() {
+    openLightbox({
+      src: QUEST.meta.finalPhotoSrc,
+      alt: "Итоговое фото маршрута",
+      caption: "Итоговая композиция маршрута по Мостовскому району",
+    });
+  }
+
+  function wireMenuView(progress) {
+    wireLightbox();
+
+    const yearEl = document.getElementById("year");
+    if (yearEl) yearEl.textContent = String(new Date().getFullYear());
+
+    const learnNewBtn = document.getElementById("learnNewBtn");
+    if (learnNewBtn && !learnNewBtn.disabled) {
+      learnNewBtn.addEventListener("click", () => {
+        navigateToStage(progress.completedCount + 1);
+      });
+    }
+
+    const resetBtn = document.getElementById("resetBtn");
+    if (resetBtn) {
+      resetBtn.addEventListener("click", () => {
+        const ok = confirm("Сбросить прогресс? Это действие нельзя отменить.");
+        if (ok) resetProgress();
+      });
+    }
+
+    const openPosterBtn = document.getElementById("openPosterBtn");
+    if (openPosterBtn) openPosterBtn.addEventListener("click", openFinalPoster);
+
+    document.querySelectorAll("[data-open-poster]").forEach((tile) => {
+      tile.addEventListener("click", openFinalPoster);
+    });
+
+    document.querySelectorAll("[data-stage]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        navigateToStage(Number(btn.getAttribute("data-stage")));
+      });
+    });
+
+    document.querySelectorAll("[data-lightbox-src]").forEach((btn) => {
+      if (btn.dataset.lbWired === "1") return;
+      btn.dataset.lbWired = "1";
+      btn.addEventListener("click", () => {
+        openLightbox({
+          src: btn.getAttribute("data-lightbox-src"),
+          alt: btn.getAttribute("data-lightbox-alt") || "",
+          caption: btn.getAttribute("data-lightbox-caption") || "",
+        });
+      });
+    });
   }
 
   function wireStageView(stageIndex) {
@@ -540,49 +593,6 @@
         saveProgress(current);
       }
       navigateToMenu();
-    });
-  }
-
-  const lb = document.getElementById("lightbox");
-  const lbImg = document.getElementById("lightboxImg");
-  const lbCaption = document.getElementById("lightboxCaption");
-  const lbClose = document.getElementById("lightboxClose");
-
-  function wireLightbox() {
-    if (lb.dataset.wired === "1") return;
-    lb.dataset.wired = "1";
-
-    lbClose.addEventListener("click", closeLightbox);
-    lb.addEventListener("click", (event) => {
-      if (event.target === lb) closeLightbox();
-    });
-    document.addEventListener("keydown", (event) => {
-      if (event.key === "Escape") closeLightbox();
-    });
-  }
-
-  function openLightbox({ src, alt, caption }) {
-    lbImg.src = src;
-    lbImg.alt = alt || "";
-    lbCaption.textContent = caption || "";
-    lb.classList.add("show");
-    lb.setAttribute("aria-hidden", "false");
-    lbClose.focus();
-  }
-
-  function closeLightbox() {
-    if (!lb.classList.contains("show")) return;
-    lb.classList.remove("show");
-    lb.setAttribute("aria-hidden", "true");
-    lbImg.src = "";
-    lbCaption.textContent = "";
-  }
-
-  function openFinalPoster() {
-    openLightbox({
-      src: QUEST.meta.finalPhotoSrc,
-      alt: "Итоговая композиция маршрута",
-      caption: "Итоговая композиция маршрута по Мостовскому району",
     });
   }
 
